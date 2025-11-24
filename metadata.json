@@ -1,0 +1,8 @@
+{
+  "name": "ArtFlow: AI Particle Cam",
+  "description": "Transform your reality into living art. A real-time webcam particle renderer with AI-generated artistic styles.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
