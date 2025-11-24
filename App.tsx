@@ -190,7 +190,7 @@ const App: React.FC = () => {
       {/* Interaction Hint */}
       {streamStarted && (
         <div className="absolute top-4 left-1/2 -translate-x-1/2 z-40 pointer-events-none opacity-50 text-xs uppercase tracking-widest text-center">
-            Move mouse to disrupt particles
+            Move one hand to disrupt particles
         </div>
       )}
     </div>

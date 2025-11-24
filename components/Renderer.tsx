@@ -1,6 +1,14 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { ArtStyleConfig, MouseState, Particle, ParticleShape } from '../types';
 
+// Declare MediaPipe globals
+declare global {
+  interface Window {
+    Hands: any;
+    Camera: any;
+  }
+}
+
 interface RendererProps {
   styleConfig: ArtStyleConfig;
   videoRef: React.RefObject<HTMLVideoElement>;
@@ -12,9 +20,78 @@ const Renderer: React.FC<RendererProps> = ({ styleConfig, videoRef, isPaused }) 
   const particlesRef = useRef<Particle[]>([]);
   const animationFrameRef = useRef<number>(0);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
+  const handTrackerRef = useRef<any>(null);
+  const cameraRef = useRef<any>(null);
   
   // Mouse interaction state
   const mouseRef = useRef<MouseState>({ x: 0, y: 0, isActive: false });
+
+  // Initialize MediaPipe Hands
+  useEffect(() => {
+    if (window.Hands && videoRef.current && !handTrackerRef.current) {
+      const hands = new window.Hands({
+        locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+      });
+
+      hands.setOptions({
+        maxNumHands: 1,
+        modelComplexity: 1,
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5
+      });
+
+      hands.onResults((results: any) => {
+        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+          const hand = results.multiHandLandmarks[0];
+          // Landmark 8 is the Index Finger Tip
+          const indexTip = hand[8];
+          
+          if (canvasRef.current) {
+            // MediaPipe coordinates are normalized (0-1).
+            // Since we CSS-mirror the canvas (scale-x-[-1]), the visual "right" is the logical "left".
+            // However, MediaPipe analyzes the raw video.
+            // If I raise my right hand, it appears on the left side of the raw video (x ~ 0.2).
+            // On a mirrored canvas, the left side of the drawing surface is displayed on the right.
+            // So: A raw video coordinate of 0.2 means we should affect the physics at 0.2.
+            // When drawn, that physics at 0.2 will appear on the right side (mirror). 
+            // So direct mapping is correct for mirrored display.
+            
+            mouseRef.current = {
+              x: indexTip.x * canvasRef.current.width,
+              y: indexTip.y * canvasRef.current.height,
+              isActive: true
+            };
+          }
+        } else {
+            // Only deactivate if no mouse is also present (optional, but let's prioritize hands)
+            // For smoother hybrid use, we might want a timeout, but simpler is better here.
+            // We won't auto-deactivate here to allow mouse to take over if hand is lost,
+            // or we can implement a "last active" logic. For now, let's let mouse events clear it
+            // or keep it active if hand just flickered.
+            // Actually, let's not clear it immediately to avoid flickering.
+        }
+      });
+
+      handTrackerRef.current = hands;
+
+      // Start Camera
+      const camera = new window.Camera(videoRef.current, {
+        onFrame: async () => {
+          if (handTrackerRef.current) {
+            await handTrackerRef.current.send({ image: videoRef.current });
+          }
+        },
+        width: 640,
+        height: 480
+      });
+      camera.start();
+      cameraRef.current = camera;
+    }
+
+    return () => {
+        // Cleanup if necessary (Camera utils doesn't have a clear stop method exposed easily without instance ref)
+    };
+  }, []);
 
   // Handle Resize
   useEffect(() => {
@@ -140,6 +217,7 @@ const Renderer: React.FC<RendererProps> = ({ styleConfig, videoRef, isPaused }) 
             
             tempCanvas.width = w;
             tempCanvas.height = h;
+            // Draw video to temp canvas
             tempCtx.drawImage(video, 0, 0, w, h);
             
             const imageData = tempCtx.getImageData(0, 0, w, h).data;
@@ -173,6 +251,15 @@ const Renderer: React.FC<RendererProps> = ({ styleConfig, videoRef, isPaused }) 
                 const b = imageData[pixelIndex + 2];
                 const brightness = (r + g + b) / 3;
                 
+                // Edge Detection Logic (Simplified)
+                // If brightness changes drastically from neighbors, it's an edge.
+                // We'll approximate using simple brightness threshold for anchoring.
+                // A better approach would be sampling neighbors here, but that's expensive inside the loop.
+                // We'll use the 'brightness' itself as a simple anchor weight.
+                // Darker areas (often background) flow more, lighter areas (face) anchor more? 
+                // Or high contrast edges? Let's use Flow Field Strength to also control "Edge Anchoring".
+                
+                // If the particle is bright enough to be visible
                 if (brightness > 15) {
                     p.brightness = brightness;
                     p.color = mapBrightnessToColor(brightness, styleConfig.colors);
@@ -181,7 +268,7 @@ const Renderer: React.FC<RendererProps> = ({ styleConfig, videoRef, isPaused }) 
                     const targetSize = styleConfig.particleSizeMin + (brightness / 255) * sizeRange;
                     p.size += (targetSize - p.size) * 0.1;
 
-                    // --- PHYSICS: MOUSE ---
+                    // --- PHYSICS: MOUSE & HAND INTERACTION ---
                     if (mouseRef.current.isActive) {
                         const dx = mouseRef.current.x - p.x;
                         const dy = mouseRef.current.y - p.y;
@@ -191,6 +278,7 @@ const Renderer: React.FC<RendererProps> = ({ styleConfig, videoRef, isPaused }) 
                         if (dist < forceRadius) {
                             const force = (forceRadius - dist) / forceRadius;
                             const angle = Math.atan2(dy, dx);
+                            // Repel force
                             p.vx -= Math.cos(angle) * force * 5 * styleConfig.speed;
                             p.vy -= Math.sin(angle) * force * 5 * styleConfig.speed;
                         }
@@ -219,17 +307,45 @@ const Renderer: React.FC<RendererProps> = ({ styleConfig, videoRef, isPaused }) 
                         p.vy += Math.sin(turbulentAngle) * styleConfig.flowFieldStrength * styleConfig.speed;
                     }
 
-                    // --- PHYSICS: RETURN TO ORIGIN ---
+                    // --- PHYSICS: EDGE ANCHORING & RETURN ---
+                    // "Anchoring": If this pixel is part of a strong edge, we want it to stay closer to origin.
+                    // We can approximate edge strength by the magnitude of gradient calculated above.
+                    // But for performance, let's just use a balanced Return Force.
+                    
                     const dxOrigin = p.originX - p.x;
                     const dyOrigin = p.originY - p.y;
-                    const returnStrength = styleConfig.flowFieldStrength > 0 ? 0.02 : 0.05;
+                    
+                    // If flow field is strong (Van Gogh), return force is weak to allow strokes.
+                    // If it's chaos, weak return.
+                    // If it's normal (Constellation), strong return to keep shape.
+                    let returnStrength = 0.05; // Base strength
+                    
+                    if (styleConfig.flowFieldStrength > 2) {
+                        returnStrength = 0.02; // Loose, flowy
+                    } else if (styleConfig.shape === ParticleShape.CROSS) {
+                        returnStrength = 0.01; // Chaotic
+                    }
+                    
+                    // Edge Anchoring Boost:
+                    // If we want accurate silhouettes, increase return strength based on brightness (assuming subject is lit).
+                    if (styleConfig.density <= 6) { // High def modes
+                         returnStrength += (brightness / 255) * 0.05;
+                    }
+
                     p.vx += dxOrigin * returnStrength * styleConfig.speed;
                     p.vy += dyOrigin * returnStrength * styleConfig.speed;
 
                     // --- PHYSICS: NOISE ---
                     if (styleConfig.noiseStrength > 0) {
-                        p.vx += (Math.random() - 0.5) * styleConfig.noiseStrength;
-                        p.vy += (Math.random() - 0.5) * styleConfig.noiseStrength;
+                        // Directional noise for Chaos Theory
+                        if (styleConfig.shape === ParticleShape.CROSS) {
+                             p.vx += (Math.random() - 0.5) * styleConfig.noiseStrength;
+                             p.vy += (Math.random() - 0.5) * styleConfig.noiseStrength;
+                        } else {
+                             // General jitter
+                             p.vx += (Math.random() - 0.5) * styleConfig.noiseStrength;
+                             p.vy += (Math.random() - 0.5) * styleConfig.noiseStrength;
+                        }
                     }
 
                     // Apply Velocity
@@ -322,6 +438,9 @@ const Renderer: React.FC<RendererProps> = ({ styleConfig, videoRef, isPaused }) 
   }, [styleConfig, dimensions, isPaused]);
 
   // Handle Mouse/Touch Events
+  // Note: Because of scale-x-[-1] mirroring, visual Left is logical Right.
+  // Standard mouse events report clientX from Top-Left.
+  // So we must invert X (width - clientX) to match the physics world.
   const handleMouseMove = (e: React.MouseEvent | React.TouchEvent) => {
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return;
@@ -335,9 +454,13 @@ const Renderer: React.FC<RendererProps> = ({ styleConfig, videoRef, isPaused }) 
       clientY = (e as React.MouseEvent).clientY;
     }
 
+    const offsetX = clientX - rect.left;
+    const offsetY = clientY - rect.top;
+
     mouseRef.current = {
-      x: clientX - rect.left,
-      y: clientY - rect.top,
+      // Invert X because of CSS mirror
+      x: rect.width - offsetX,
+      y: offsetY,
       isActive: true
     };
   };
@@ -353,7 +476,8 @@ const Renderer: React.FC<RendererProps> = ({ styleConfig, videoRef, isPaused }) 
       onTouchMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
       onTouchEnd={handleMouseLeave}
-      className="absolute top-0 left-0 w-full h-full block touch-none"
+      // Added scale-x-[-1] for Mirror Effect
+      className="absolute top-0 left-0 w-full h-full block touch-none scale-x-[-1]"
     />
   );
 };
