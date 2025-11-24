@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Renderer from './components/Renderer';
 import Controls from './components/Controls';
+import MusicPlayer from './components/MusicPlayer';
 import { ArtStyleConfig, ParticleShape } from './types';
 
 // Preset Styles
@@ -36,21 +37,6 @@ const PRESET_STYLES: ArtStyleConfig[] = [
     trailEffect: 0.05, // High persistence for blending
     noiseStrength: 1.0,
     flowFieldStrength: 2.0 // Moderate flow for fluid look
-  },
-  {
-    name: "Classic Pointillism",
-    description: "Classic dots resembling pointillism art",
-    colors: ["#ffffff", "#cccccc", "#999999", "#666666", "#333333"],
-    particleSizeMin: 2,
-    particleSizeMax: 6,
-    density: 8,
-    speed: 0.5,
-    friction: 0.9,
-    shape: ParticleShape.CIRCLE,
-    connectionDistance: 0,
-    trailEffect: 0.4,
-    noiseStrength: 0.5,
-    flowFieldStrength: 0
   },
   {
     name: "Cyber Grid",
@@ -96,21 +82,6 @@ const PRESET_STYLES: ArtStyleConfig[] = [
     trailEffect: 0.1,
     noiseStrength: 8,
     flowFieldStrength: 1.0
-  },
-  {
-    name: "Ink Flow",
-    description: "Black and white fluid motion",
-    colors: ["#ffffff", "#dddddd", "#bbbbbb"],
-    particleSizeMin: 4,
-    particleSizeMax: 8, // Adjusted to 8
-    density: 10,
-    speed: 1,
-    friction: 0.92,
-    shape: ParticleShape.CIRCLE,
-    connectionDistance: 0,
-    trailEffect: 0.05,
-    noiseStrength: 2,
-    flowFieldStrength: 2.5
   }
 ];
 
@@ -171,6 +142,9 @@ const App: React.FC = () => {
           isPaused={false}
         />
       )}
+
+      {/* Music Player - Always visible once started */}
+      {streamStarted && <MusicPlayer />}
 
       {/* Welcome Screen */}
       {showWelcome && (
