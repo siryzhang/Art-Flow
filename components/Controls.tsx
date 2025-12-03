@@ -151,14 +151,14 @@ const Controls: React.FC<ControlsProps> = ({ currentStyle, onStyleChange, preset
 
             <div className="space-y-2">
                 <div className="flex justify-between text-xs text-white/60">
-                    <span>Connections</span>
-                    <span>{currentStyle.connectionDistance}</span>
+                    <span>3D Depth</span>
+                    <span>{currentStyle.zDepth}</span>
                 </div>
                 <input 
                     type="range" 
-                    min="0" max="100" step="5"
-                    value={currentStyle.connectionDistance}
-                    onChange={(e) => onStyleChange({...currentStyle, connectionDistance: parseInt(e.target.value)})}
+                    min="0" max="300" step="10"
+                    value={currentStyle.zDepth}
+                    onChange={(e) => onStyleChange({...currentStyle, zDepth: parseInt(e.target.value)})}
                     className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full"
                 />
             </div>

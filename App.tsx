@@ -12,15 +12,16 @@ const PRESET_STYLES: ArtStyleConfig[] = [
     // Deep Blues, Vibrant Yellow/Orange, Cyan highlight
     colors: ["#1A3B6E", "#122645", "#599DB5", "#E3B624", "#D98E04"],
     particleSizeMin: 3,
-    particleSizeMax: 3, // Adjusted to 3 as requested
-    density: 6, // High density for details
-    speed: 0.3, // Adjusted to 0.3 as requested
+    particleSizeMax: 3,
+    density: 6,
+    speed: 0.3,
     friction: 0.92,
     shape: ParticleShape.LINE, 
     connectionDistance: 0,
-    trailEffect: 0.2, // Some blur for continuity
-    noiseStrength: 1.5, // Add chaos
-    flowFieldStrength: 3.5 // STRONG flow for curves/contours
+    trailEffect: 0.2,
+    noiseStrength: 1.5,
+    flowFieldStrength: 3.5,
+    zDepth: 50 // Moderate depth texture
   },
   {
     name: "Monet's Water Lilies",
@@ -28,15 +29,16 @@ const PRESET_STYLES: ArtStyleConfig[] = [
     // Pastel Greens, Water Blues, Soft Pinks, Lilac
     colors: ["#769C6D", "#5E8B9E", "#A5C05B", "#D1828F", "#9C8EB0"],
     particleSizeMin: 4,
-    particleSizeMax: 8, // Adjusted to 8
+    particleSizeMax: 8,
     density: 5, 
-    speed: 0.8, // Gentle
+    speed: 0.8,
     friction: 0.85,
     shape: ParticleShape.CIRCLE, 
     connectionDistance: 0,
-    trailEffect: 0.05, // High persistence for blending
+    trailEffect: 0.05,
     noiseStrength: 1.0,
-    flowFieldStrength: 2.0 // Moderate flow for fluid look
+    flowFieldStrength: 2.0,
+    zDepth: 20 // Subtle depth
   },
   {
     name: "Cyber Grid",
@@ -51,7 +53,8 @@ const PRESET_STYLES: ArtStyleConfig[] = [
     connectionDistance: 0,
     trailEffect: 0.2,
     noiseStrength: 0,
-    flowFieldStrength: 0
+    flowFieldStrength: 0,
+    zDepth: 150 // Strong 3D blocks
   },
   {
     name: "Constellation",
@@ -59,14 +62,15 @@ const PRESET_STYLES: ArtStyleConfig[] = [
     colors: ["#ffffff", "#aaccff", "#ffccaa"],
     particleSizeMin: 1,
     particleSizeMax: 4,
-    density: 13, // Adjusted to 13
+    density: 13,
     speed: 1.5,
     friction: 0.95,
     shape: ParticleShape.CIRCLE,
     connectionDistance: 40,
     trailEffect: 0.15,
     noiseStrength: 1,
-    flowFieldStrength: 0.2
+    flowFieldStrength: 0.2,
+    zDepth: 100
   },
   {
     name: "Chaos Theory",
@@ -74,14 +78,15 @@ const PRESET_STYLES: ArtStyleConfig[] = [
     colors: ["#ff0055", "#ffff00", "#00ffff"],
     particleSizeMin: 2,
     particleSizeMax: 20,
-    density: 10, // Adjusted to 10
-    speed: 1, // Adjusted to 1
+    density: 10,
+    speed: 1,
     friction: 0.9,
     shape: ParticleShape.CROSS,
     connectionDistance: 0,
     trailEffect: 0.1,
     noiseStrength: 8,
-    flowFieldStrength: 1.0
+    flowFieldStrength: 1.0,
+    zDepth: 200 // Extreme chaos depth
   }
 ];
 
@@ -190,7 +195,7 @@ const App: React.FC = () => {
       {/* Interaction Hint */}
       {streamStarted && (
         <div className="absolute top-4 left-1/2 -translate-x-1/2 z-40 pointer-events-none opacity-50 text-xs uppercase tracking-widest text-center">
-            Move one hand to disrupt particles
+            Move mouse to rotate • Move hand to disrupt
         </div>
       )}
     </div>

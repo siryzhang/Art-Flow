@@ -47,28 +47,15 @@ const Renderer: React.FC<RendererProps> = ({ styleConfig, videoRef, isPaused }) 
           const indexTip = hand[8];
           
           if (canvasRef.current) {
-            // MediaPipe coordinates are normalized (0-1).
-            // Since we CSS-mirror the canvas (scale-x-[-1]), the visual "right" is the logical "left".
-            // However, MediaPipe analyzes the raw video.
-            // If I raise my right hand, it appears on the left side of the raw video (x ~ 0.2).
-            // On a mirrored canvas, the left side of the drawing surface is displayed on the right.
-            // So: A raw video coordinate of 0.2 means we should affect the physics at 0.2.
-            // When drawn, that physics at 0.2 will appear on the right side (mirror). 
-            // So direct mapping is correct for mirrored display.
-            
+            // Mapping for interaction (repel physics)
+            // Due to scale-x-[-1] mirroring, visual right is logical left.
+            // But physics happens in logical space.
             mouseRef.current = {
               x: indexTip.x * canvasRef.current.width,
               y: indexTip.y * canvasRef.current.height,
               isActive: true
             };
           }
-        } else {
-            // Only deactivate if no mouse is also present (optional, but let's prioritize hands)
-            // For smoother hybrid use, we might want a timeout, but simpler is better here.
-            // We won't auto-deactivate here to allow mouse to take over if hand is lost,
-            // or we can implement a "last active" logic. For now, let's let mouse events clear it
-            // or keep it active if hand just flickered.
-            // Actually, let's not clear it immediately to avoid flickering.
         }
       });
 
@@ -89,7 +76,7 @@ const Renderer: React.FC<RendererProps> = ({ styleConfig, videoRef, isPaused }) 
     }
 
     return () => {
-        // Cleanup if necessary (Camera utils doesn't have a clear stop method exposed easily without instance ref)
+        // Cleanup if necessary
     };
   }, []);
 
@@ -98,7 +85,6 @@ const Renderer: React.FC<RendererProps> = ({ styleConfig, videoRef, isPaused }) 
     const handleResize = () => {
       if (canvasRef.current) {
         const { innerWidth, innerHeight } = window;
-        // Ensure dimensions are valid
         if (innerWidth === 0 || innerHeight === 0) return;
 
         canvasRef.current.width = innerWidth;
@@ -120,7 +106,6 @@ const Renderer: React.FC<RendererProps> = ({ styleConfig, videoRef, isPaused }) 
     particlesRef.current = [];
     const gap = styleConfig.density;
     
-    // Safety check for infinite loop
     if (gap <= 0) return;
 
     for (let y = 0; y < height; y += gap) {
@@ -128,6 +113,8 @@ const Renderer: React.FC<RendererProps> = ({ styleConfig, videoRef, isPaused }) 
         particlesRef.current.push({
           x: x,
           y: y,
+          z: 0,
+          vz: 0,
           originX: x,
           originY: y,
           vx: 0,
@@ -145,37 +132,38 @@ const Renderer: React.FC<RendererProps> = ({ styleConfig, videoRef, isPaused }) 
     return palette[index] || palette[0];
   };
 
-  const drawShape = (ctx: CanvasRenderingContext2D, p: Particle, shape: ParticleShape) => {
+  const drawShape = (ctx: CanvasRenderingContext2D, x: number, y: number, zScale: number, p: Particle, shape: ParticleShape) => {
+    const drawnSize = Math.max(0.5, p.size * zScale); // Scale size by 3D depth
+
     switch (shape) {
       case ParticleShape.CIRCLE:
         ctx.beginPath();
-        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+        ctx.arc(x, y, drawnSize, 0, Math.PI * 2);
         ctx.fill();
         break;
       case ParticleShape.SQUARE:
-        ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+        ctx.fillRect(x - drawnSize / 2, y - drawnSize / 2, drawnSize, drawnSize);
         break;
       case ParticleShape.LINE:
         ctx.beginPath();
-        // Dynamic Rotation: Align line with velocity vector to simulate flow/brush strokes
+        // Just use velocity for angle for now, ignoring 3D rotation of vector for simplicity
         const speed = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
-        // If moving fast enough, use velocity. Otherwise use a default or noise-based angle.
         let angle = speed > 0.1 ? Math.atan2(p.vy, p.vx) : Math.PI / 2;
         
         const cos = Math.cos(angle);
         const sin = Math.sin(angle);
         
-        const len = p.size; 
-        ctx.moveTo(p.x - cos * len, p.y - sin * len);
-        ctx.lineTo(p.x + cos * len, p.y + sin * len);
+        const len = drawnSize; 
+        ctx.moveTo(x - cos * len, y - sin * len);
+        ctx.lineTo(x + cos * len, y + sin * len);
         ctx.stroke();
         break;
       case ParticleShape.CROSS:
         ctx.beginPath();
-        ctx.moveTo(p.x - p.size, p.y);
-        ctx.lineTo(p.x + p.size, p.y);
-        ctx.moveTo(p.x, p.y - p.size);
-        ctx.lineTo(p.x, p.y + p.size);
+        ctx.moveTo(x - drawnSize, y);
+        ctx.lineTo(x + drawnSize, y);
+        ctx.moveTo(x, y - drawnSize);
+        ctx.lineTo(x, y + drawnSize);
         ctx.stroke();
         break;
     }
@@ -190,11 +178,9 @@ const Renderer: React.FC<RendererProps> = ({ styleConfig, videoRef, isPaused }) 
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     if (!ctx) return;
 
-    // Off-screen canvas for pixel analysis (performance optimization)
     const tempCanvas = document.createElement('canvas');
     const tempCtx = tempCanvas.getContext('2d', { willReadFrequently: true });
 
-    // Helper to safely get pixel brightness
     const getBrightness = (data: Uint8ClampedArray, width: number, x: number, y: number) => {
         const idx = (Math.floor(y) * width + Math.floor(x)) * 4;
         if (idx < 0 || idx >= data.length) return 0;
@@ -207,59 +193,56 @@ const Renderer: React.FC<RendererProps> = ({ styleConfig, videoRef, isPaused }) 
       if (!isPaused && video.readyState === 4) {
         time += 0.01;
         
-        // 1. Process Video Data
-        const analysisScale = 0.15; // Lower scale for performance
+        const analysisScale = 0.15;
         const w = Math.floor(dimensions.width * analysisScale);
         const h = Math.floor(dimensions.height * analysisScale);
         
-        // CRITICAL FIX: Prevent IndexSizeError by ensuring non-zero dimensions
         if (w > 0 && h > 0 && tempCtx) {
             
             tempCanvas.width = w;
             tempCanvas.height = h;
-            // Draw video to temp canvas
             tempCtx.drawImage(video, 0, 0, w, h);
             
             const imageData = tempCtx.getImageData(0, 0, w, h).data;
 
-            // 2. Clear Main Canvas with Trail Effect
+            // Clear with trail effect
             ctx.fillStyle = `rgba(0, 0, 0, ${styleConfig.trailEffect})`;
             ctx.fillRect(0, 0, dimensions.width, dimensions.height);
 
-            // Spatial Grid for Connections
-            // We use a spatial hash grid to find neighbors efficiently (O(1) lookup vs O(N) scan)
+            // 3D Projection Setup
+            const cx = dimensions.width / 2;
+            const cy = dimensions.height / 2;
+            const fov = dimensions.width * 0.8; 
+            
+            // Fixed gentle camera sway (automatic) instead of mouse control
+            const autoRotX = Math.sin(time * 0.5) * 0.05; 
+            const autoRotY = Math.cos(time * 0.3) * 0.05;
+
+            const cosY = Math.cos(autoRotY);
+            const sinY = Math.sin(autoRotY);
+            const cosX = Math.cos(autoRotX);
+            const sinX = Math.sin(autoRotX);
+
             const grid: Record<string, number[]> = {};
-            const cellSize = Math.max(styleConfig.connectionDistance, 40); // Minimum cell size prevents overhead
+            const cellSize = Math.max(styleConfig.connectionDistance, 40); 
             const useConnections = styleConfig.connectionDistance > 0;
 
-            // 3. Update & Draw Particles
+            const projectedCoords: {x: number, y: number, s: number}[] = new Array(particlesRef.current.length);
+
+            // Virtual Mouse Z Position (The 'finger' depth)
+            const mouseZ = -100; // Hovering in front of the screen plane (negative Z)
+
             for (let i = 0; i < particlesRef.current.length; i++) {
                 const p = particlesRef.current[i];
                 
-                // Map particle position to analysis grid
                 let pixelX = Math.floor(p.x * analysisScale);
                 let pixelY = Math.floor(p.y * analysisScale);
-                
-                // Clamp to bounds
                 pixelX = Math.max(0, Math.min(w - 1, pixelX));
                 pixelY = Math.max(0, Math.min(h - 1, pixelY));
 
                 const pixelIndex = (pixelY * w + pixelX) * 4;
+                const brightness = (imageData[pixelIndex] + imageData[pixelIndex + 1] + imageData[pixelIndex + 2]) / 3;
 
-                const r = imageData[pixelIndex];
-                const g = imageData[pixelIndex + 1];
-                const b = imageData[pixelIndex + 2];
-                const brightness = (r + g + b) / 3;
-                
-                // Edge Detection Logic (Simplified)
-                // If brightness changes drastically from neighbors, it's an edge.
-                // We'll approximate using simple brightness threshold for anchoring.
-                // A better approach would be sampling neighbors here, but that's expensive inside the loop.
-                // We'll use the 'brightness' itself as a simple anchor weight.
-                // Darker areas (often background) flow more, lighter areas (face) anchor more? 
-                // Or high contrast edges? Let's use Flow Field Strength to also control "Edge Anchoring".
-                
-                // If the particle is bright enough to be visible
                 if (brightness > 15) {
                     p.brightness = brightness;
                     p.color = mapBrightnessToColor(brightness, styleConfig.colors);
@@ -268,100 +251,121 @@ const Renderer: React.FC<RendererProps> = ({ styleConfig, videoRef, isPaused }) 
                     const targetSize = styleConfig.particleSizeMin + (brightness / 255) * sizeRange;
                     p.size += (targetSize - p.size) * 0.1;
 
-                    // --- PHYSICS: MOUSE & HAND INTERACTION ---
+                    // --- 3D PHYSICS ENGINE ---
+                    // Target Z based on brightness (Bas-Relief map)
+                    const targetZ = (brightness / 255) * styleConfig.zDepth;
+                    
+                    // Spring force towards target Z
+                    const k = 0.05; // Spring constant
+                    const damping = 0.85; // Damping factor
+                    const zForce = (targetZ - p.z) * k;
+                    p.vz += zForce;
+                    
+                    // Home return force X/Y
+                    const dxOrigin = p.originX - p.x;
+                    const dyOrigin = p.originY - p.y;
+                    let returnStrength = 0.05;
+                    if (styleConfig.flowFieldStrength > 2) returnStrength = 0.02;
+                    else if (styleConfig.shape === ParticleShape.CROSS) returnStrength = 0.01;
+                    
+                    p.vx += dxOrigin * returnStrength * styleConfig.speed;
+                    p.vy += dyOrigin * returnStrength * styleConfig.speed;
+
+                    // --- INTERACTION ---
                     if (mouseRef.current.isActive) {
                         const dx = mouseRef.current.x - p.x;
                         const dy = mouseRef.current.y - p.y;
-                        const dist = Math.sqrt(dx * dx + dy * dy);
-                        const forceRadius = 150;
+                        const dz = mouseZ - p.z; // Distance in Z from mouse to particle
 
-                        if (dist < forceRadius) {
-                            const force = (forceRadius - dist) / forceRadius;
-                            const angle = Math.atan2(dy, dx);
-                            // Repel force
-                            p.vx -= Math.cos(angle) * force * 5 * styleConfig.speed;
-                            p.vy -= Math.sin(angle) * force * 5 * styleConfig.speed;
+                        // 3D Distance squared
+                        const distSq = dx*dx + dy*dy + dz*dz; 
+                        const forceRadiusSq = 30000; // ~170px radius
+
+                        if (distSq < forceRadiusSq) {
+                            const dist = Math.sqrt(distSq);
+                            const force = (1 - dist / Math.sqrt(forceRadiusSq));
+                            
+                            // Direction vector from mouse to particle
+                            const nx = dx / dist; // Points towards mouse (attract) or away?
+                            // We want repel: vector from Mouse TO Particle
+                            // Vector = Particle - Mouse = (-dx, -dy, -dz)
+                            
+                            // Let's create a "Dent" effect.
+                            // Push particles AWAY from mouse center in 3D.
+                            // Since MouseZ is -100 (in front), particles are at Z ~ 0+.
+                            // Vector P - M has positive Z component.
+                            // So particles will be pushed deeper into the scene (+Z).
+                            
+                            const pushStrength = 20 * styleConfig.speed;
+                            
+                            // Invert dx/dy because dx was calculated as Mouse - Particle
+                            p.vx -= (dx / dist) * force * pushStrength;
+                            p.vy -= (dy / dist) * force * pushStrength;
+                            p.vz -= (dz / dist) * force * pushStrength * 2; // Stronger kick in Z
                         }
                     }
 
-                    // --- PHYSICS: FLOW FIELD (The "Curve" Effect) ---
+                    // Flow Fields
                     if (styleConfig.flowFieldStrength > 0) {
-                        // Calculate Gradient (Sobel-like operator)
                         const lookAhead = 2;
                         const bL = getBrightness(imageData, w, pixelX - lookAhead, pixelY);
                         const bR = getBrightness(imageData, w, pixelX + lookAhead, pixelY);
                         const bU = getBrightness(imageData, w, pixelX, pixelY - lookAhead);
                         const bD = getBrightness(imageData, w, pixelX, pixelY + lookAhead);
-
                         const dx = bR - bL;
                         const dy = bD - bU;
-
-                        // Perpendicular to gradient is the contour (the "stroke" direction)
                         const angle = Math.atan2(dy, dx) + Math.PI / 2;
-                        
-                        // Add some curl noise for "Starry Night" turbulence
                         const noise = Math.sin(p.x * 0.01 + time) * Math.cos(p.y * 0.01 + time);
                         const turbulentAngle = angle + (noise * 0.5);
-
                         p.vx += Math.cos(turbulentAngle) * styleConfig.flowFieldStrength * styleConfig.speed;
                         p.vy += Math.sin(turbulentAngle) * styleConfig.flowFieldStrength * styleConfig.speed;
                     }
 
-                    // --- PHYSICS: EDGE ANCHORING & RETURN ---
-                    // "Anchoring": If this pixel is part of a strong edge, we want it to stay closer to origin.
-                    // We can approximate edge strength by the magnitude of gradient calculated above.
-                    // But for performance, let's just use a balanced Return Force.
-                    
-                    const dxOrigin = p.originX - p.x;
-                    const dyOrigin = p.originY - p.y;
-                    
-                    // If flow field is strong (Van Gogh), return force is weak to allow strokes.
-                    // If it's chaos, weak return.
-                    // If it's normal (Constellation), strong return to keep shape.
-                    let returnStrength = 0.05; // Base strength
-                    
-                    if (styleConfig.flowFieldStrength > 2) {
-                        returnStrength = 0.02; // Loose, flowy
-                    } else if (styleConfig.shape === ParticleShape.CROSS) {
-                        returnStrength = 0.01; // Chaotic
-                    }
-                    
-                    // Edge Anchoring Boost:
-                    // If we want accurate silhouettes, increase return strength based on brightness (assuming subject is lit).
-                    if (styleConfig.density <= 6) { // High def modes
-                         returnStrength += (brightness / 255) * 0.05;
-                    }
-
-                    p.vx += dxOrigin * returnStrength * styleConfig.speed;
-                    p.vy += dyOrigin * returnStrength * styleConfig.speed;
-
-                    // --- PHYSICS: NOISE ---
                     if (styleConfig.noiseStrength > 0) {
-                        // Directional noise for Chaos Theory
-                        if (styleConfig.shape === ParticleShape.CROSS) {
-                             p.vx += (Math.random() - 0.5) * styleConfig.noiseStrength;
-                             p.vy += (Math.random() - 0.5) * styleConfig.noiseStrength;
-                        } else {
-                             // General jitter
-                             p.vx += (Math.random() - 0.5) * styleConfig.noiseStrength;
-                             p.vy += (Math.random() - 0.5) * styleConfig.noiseStrength;
-                        }
+                        p.vx += (Math.random() - 0.5) * styleConfig.noiseStrength;
+                        p.vy += (Math.random() - 0.5) * styleConfig.noiseStrength;
                     }
 
-                    // Apply Velocity
+                    // Apply Physics
                     p.vx *= styleConfig.friction;
                     p.vy *= styleConfig.friction;
+                    p.vz *= damping; // Z-damping
+
                     p.x += p.vx;
                     p.y += p.vy;
+                    p.z += p.vz;
 
-                    // Draw Shape
+                    // --- 3D PROJECTION ---
+                    const x0 = p.x - cx;
+                    const y0 = p.y - cy;
+                    const z0 = p.z; 
+
+                    // Rotate Y
+                    const x1 = x0 * cosY - z0 * sinY;
+                    const z1 = x0 * sinY + z0 * cosY;
+
+                    // Rotate X
+                    const y2 = y0 * cosX - z1 * sinX;
+                    const z2 = y0 * sinX + z1 * cosX;
+
+                    // Perspective
+                    const perspectiveZ = fov - z2; 
+                    const scale = perspectiveZ > 0 ? fov / perspectiveZ : 100;
+
+                    const screenX = x1 * scale + cx;
+                    const screenY = y2 * scale + cy;
+                    
+                    projectedCoords[i] = { x: screenX, y: screenY, s: scale };
+
                     ctx.fillStyle = p.color;
                     ctx.strokeStyle = p.color;
-                    ctx.lineWidth = Math.min(3, p.size / 2); // Thicker lines for brush effect
+                    ctx.lineWidth = Math.min(3, p.size / 2 * scale);
                     ctx.lineCap = 'round';
-                    drawShape(ctx, p, styleConfig.shape);
+                    
+                    if (scale > 0 && screenX > -50 && screenX < dimensions.width + 50 && screenY > -50 && screenY < dimensions.height + 50) {
+                        drawShape(ctx, screenX, screenY, scale, p, styleConfig.shape);
+                    }
 
-                    // Add to Spatial Grid (if connections enabled)
                     if (useConnections) {
                         const gx = Math.floor(p.x / cellSize);
                         const gy = Math.floor(p.y / cellSize);
@@ -372,21 +376,19 @@ const Renderer: React.FC<RendererProps> = ({ styleConfig, videoRef, isPaused }) 
                 }
             }
 
-            // 4. Draw Connections (Spatial Grid Pass)
+            // Draw Connections
             if (useConnections) {
                 const connDistSq = styleConfig.connectionDistance * styleConfig.connectionDistance;
-                ctx.lineWidth = 1;
-
-                // Iterate only through populated cells
+                
                 for (const key in grid) {
                     const [gx, gy] = key.split(',').map(Number);
                     const cellParticles = grid[key];
 
-                    // For each particle in this cell
                     for (const p1Idx of cellParticles) {
                          const p1 = particlesRef.current[p1Idx];
+                         const proj1 = projectedCoords[p1Idx];
+                         if (!proj1) continue;
 
-                         // Check neighbors (3x3 grid around current cell)
                          for (let ox = -1; ox <= 1; ox++) {
                              for (let oy = -1; oy <= 1; oy++) {
                                  const neighborKey = `${gx + ox},${gy + oy}`;
@@ -394,24 +396,26 @@ const Renderer: React.FC<RendererProps> = ({ styleConfig, videoRef, isPaused }) 
                                  
                                  if (neighborParticles) {
                                      for (const p2Idx of neighborParticles) {
-                                         // Avoid duplicates and self-connection by index check
                                          if (p1Idx < p2Idx) {
                                              const p2 = particlesRef.current[p2Idx];
+                                             const proj2 = projectedCoords[p2Idx];
+                                             if (!proj2) continue;
+
+                                             // Use physical distance for threshold
                                              const dx = p1.x - p2.x;
                                              const dy = p1.y - p2.y;
+                                             const dz = p1.z - p2.z;
                                              
-                                             // Fast bounding box check before sqrt
-                                             if (Math.abs(dx) > styleConfig.connectionDistance || Math.abs(dy) > styleConfig.connectionDistance) {
-                                                 continue;
-                                             }
+                                             if (Math.abs(dx) > styleConfig.connectionDistance || Math.abs(dy) > styleConfig.connectionDistance) continue;
 
-                                             const distSq = dx * dx + dy * dy;
+                                             const distSq = dx * dx + dy * dy + dz * dz;
                                              if (distSq < connDistSq) {
                                                  const alpha = 1 - (Math.sqrt(distSq) / styleConfig.connectionDistance);
                                                  ctx.beginPath();
-                                                 ctx.moveTo(p1.x, p1.y);
-                                                 ctx.lineTo(p2.x, p2.y);
+                                                 ctx.moveTo(proj1.x, proj1.y);
+                                                 ctx.lineTo(proj2.x, proj2.y);
                                                  ctx.strokeStyle = p1.color;
+                                                 ctx.lineWidth = 1 * ((proj1.s + proj2.s) / 2);
                                                  ctx.globalAlpha = alpha;
                                                  ctx.stroke();
                                                  ctx.globalAlpha = 1.0;
@@ -438,9 +442,6 @@ const Renderer: React.FC<RendererProps> = ({ styleConfig, videoRef, isPaused }) 
   }, [styleConfig, dimensions, isPaused]);
 
   // Handle Mouse/Touch Events
-  // Note: Because of scale-x-[-1] mirroring, visual Left is logical Right.
-  // Standard mouse events report clientX from Top-Left.
-  // So we must invert X (width - clientX) to match the physics world.
   const handleMouseMove = (e: React.MouseEvent | React.TouchEvent) => {
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return;
@@ -457,8 +458,8 @@ const Renderer: React.FC<RendererProps> = ({ styleConfig, videoRef, isPaused }) 
     const offsetX = clientX - rect.left;
     const offsetY = clientY - rect.top;
 
+    // Physics Interaction (Inverted X due to scale-x-[-1])
     mouseRef.current = {
-      // Invert X because of CSS mirror
       x: rect.width - offsetX,
       y: offsetY,
       isActive: true
@@ -476,7 +477,6 @@ const Renderer: React.FC<RendererProps> = ({ styleConfig, videoRef, isPaused }) 
       onTouchMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
       onTouchEnd={handleMouseLeave}
-      // Added scale-x-[-1] for Mirror Effect
       className="absolute top-0 left-0 w-full h-full block touch-none scale-x-[-1]"
     />
   );

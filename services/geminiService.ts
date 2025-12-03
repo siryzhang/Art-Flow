@@ -10,8 +10,9 @@ export const generateArtStyle = async (prompt: string): Promise<ArtStyleConfig> 
       model: "gemini-2.5-flash",
       contents: `Create a visual art style configuration for a particle system based on this description: "${prompt}".
       The particles represent pixels from a webcam feed.
-      Think about colors, chaos, geometry, and movement.
-      For impressionist/Van Gogh styles, use high flowFieldStrength.`,
+      Think about colors, chaos, geometry, movement, and 3D depth.
+      For impressionist/Van Gogh styles, use high flowFieldStrength.
+      For cyber/tech styles, use higher zDepth for a 3D effect.`,
       config: {
         responseMimeType: "application/json",
         responseSchema: {
@@ -32,7 +33,8 @@ export const generateArtStyle = async (prompt: string): Promise<ArtStyleConfig> 
             connectionDistance: { type: Type.NUMBER, description: "Distance to draw lines between particles. 0 for none, max 100." },
             trailEffect: { type: Type.NUMBER, description: "Alpha for clearing canvas (0.1 = long trails, 0.9 = no trails)" },
             noiseStrength: { type: Type.NUMBER, description: "Random jitter amount 0-10" },
-            flowFieldStrength: { type: Type.NUMBER, description: "0 to 5. How much particles follow image contours/gradients." }
+            flowFieldStrength: { type: Type.NUMBER, description: "0 to 5. How much particles follow image contours/gradients." },
+            zDepth: { type: Type.NUMBER, description: "0 to 300. How much brightness affects Z-axis displacement (3D relief)." }
           },
           required: ["name", "colors", "particleSizeMin", "particleSizeMax", "density", "speed", "shape"]
         }
@@ -52,6 +54,7 @@ export const generateArtStyle = async (prompt: string): Promise<ArtStyleConfig> 
       return {
         ...data,
         flowFieldStrength: data.flowFieldStrength || 0,
+        zDepth: data.zDepth || 0,
         shape: shapeMap[data.shape] || ParticleShape.CIRCLE
       };
     }
@@ -72,7 +75,8 @@ export const generateArtStyle = async (prompt: string): Promise<ArtStyleConfig> 
       connectionDistance: 0,
       trailEffect: 0.5,
       noiseStrength: 5,
-      flowFieldStrength: 0
+      flowFieldStrength: 0,
+      zDepth: 50
     };
   }
 };

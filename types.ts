@@ -19,11 +19,14 @@ export interface ArtStyleConfig {
   trailEffect: number; // 0 to 1, persistence
   noiseStrength: number;
   flowFieldStrength: number; // 0 to 5, how much particles follow image contours
+  zDepth: number; // 0 to 500, strength of 3D displacement
 }
 
 export interface Particle {
   x: number;
   y: number;
+  z: number;
+  vz: number; // Velocity Z for 3D physics
   originX: number;
   originY: number;
   vx: number;
