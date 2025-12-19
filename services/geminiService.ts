@@ -1,18 +1,20 @@
+
 import { GoogleGenAI, Type } from "@google/genai";
 import { ArtStyleConfig, ParticleShape } from "../types";
 
-const apiKey = process.env.API_KEY || '';
-const ai = new GoogleGenAI({ apiKey });
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
 
 export const generateArtStyle = async (prompt: string): Promise<ArtStyleConfig> => {
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: `Create a visual art style configuration for a particle system based on this description: "${prompt}".
-      The particles represent pixels from a webcam feed.
-      Think about colors, chaos, geometry, movement, and 3D depth.
-      For impressionist/Van Gogh styles, use high flowFieldStrength.
-      For cyber/tech styles, use higher zDepth for a 3D effect.`,
+      model: "gemini-3-flash-preview",
+      contents: `Create a highly artistic visual particle system config based on: "${prompt}".
+      The particles render a live webcam feed in 2D space. 
+      Focus on aesthetic concepts: color palettes, geometric abstraction, movement fluid dynamics.
+      Rules:
+      - Use 'lighter' blending for neon/glow/cyber themes.
+      - Use 'source-over' for paint/ink/minimalist themes.
+      - 'density' (4-15): 4 is high detail, 15 is abstract.`,
       config: {
         responseMimeType: "application/json",
         responseSchema: {
@@ -20,63 +22,54 @@ export const generateArtStyle = async (prompt: string): Promise<ArtStyleConfig> 
           properties: {
             name: { type: Type.STRING },
             description: { type: Type.STRING },
-            colors: {
-              type: Type.ARRAY,
-              items: { type: Type.STRING, description: "Hex color codes" }
-            },
-            particleSizeMin: { type: Type.NUMBER, description: "Between 1 and 5" },
-            particleSizeMax: { type: Type.NUMBER, description: "Between 2 and 20" },
-            density: { type: Type.NUMBER, description: "Gap between particles. Low (4) is HD, High (15) is abstract. Range 4-20." },
-            speed: { type: Type.NUMBER, description: "Movement multiplier 0-5" },
-            friction: { type: Type.NUMBER, description: "0.5 to 0.99" },
+            colors: { type: Type.ARRAY, items: { type: Type.STRING } },
+            particleSizeMin: { type: Type.NUMBER },
+            particleSizeMax: { type: Type.NUMBER },
+            density: { type: Type.NUMBER },
+            speed: { type: Type.NUMBER },
+            friction: { type: Type.NUMBER },
             shape: { type: Type.STRING, enum: ["circle", "square", "line", "cross"] },
-            connectionDistance: { type: Type.NUMBER, description: "Distance to draw lines between particles. 0 for none, max 100." },
-            trailEffect: { type: Type.NUMBER, description: "Alpha for clearing canvas (0.1 = long trails, 0.9 = no trails)" },
-            noiseStrength: { type: Type.NUMBER, description: "Random jitter amount 0-10" },
-            flowFieldStrength: { type: Type.NUMBER, description: "0 to 5. How much particles follow image contours/gradients." },
-            zDepth: { type: Type.NUMBER, description: "0 to 300. How much brightness affects Z-axis displacement (3D relief)." }
+            blendingMode: { type: Type.STRING, enum: ["source-over", "lighter"] },
+            connectionDistance: { type: Type.NUMBER },
+            trailEffect: { type: Type.NUMBER },
+            noiseStrength: { type: Type.NUMBER },
+            flowFieldStrength: { type: Type.NUMBER }
           },
-          required: ["name", "colors", "particleSizeMin", "particleSizeMax", "density", "speed", "shape"]
+          required: ["name", "colors", "density", "shape", "blendingMode"]
         }
       }
     });
 
     if (response.text) {
-      const data = JSON.parse(response.text) as any;
-      // Map string enum to typed enum
-      const shapeMap: Record<string, ParticleShape> = {
-        'circle': ParticleShape.CIRCLE,
-        'square': ParticleShape.SQUARE,
-        'line': ParticleShape.LINE,
-        'cross': ParticleShape.CROSS
-      };
-
+      const data = JSON.parse(response.text);
+      const shapeMap: any = { 'circle': ParticleShape.CIRCLE, 'square': ParticleShape.SQUARE, 'line': ParticleShape.LINE, 'cross': ParticleShape.CROSS };
+      
       return {
         ...data,
-        flowFieldStrength: data.flowFieldStrength || 0,
-        zDepth: data.zDepth || 0,
-        shape: shapeMap[data.shape] || ParticleShape.CIRCLE
+        shape: shapeMap[data.shape] || ParticleShape.CIRCLE,
+        blendingMode: data.blendingMode || 'source-over',
+        flowFieldStrength: data.flowFieldStrength ?? 1,
+        trailEffect: data.trailEffect ?? 0.2
       };
     }
-    throw new Error("No response text");
+    throw new Error("No response");
   } catch (error) {
-    console.error("Failed to generate style:", error);
-    // Fallback style
+    console.error("Style generation failed:", error);
     return {
-      name: "Error Glitch",
-      description: "Fallback style due to AI error",
-      colors: ["#ff0000", "#ffffff", "#000000"],
-      particleSizeMin: 2,
-      particleSizeMax: 10,
-      density: 10,
-      speed: 2,
+      name: "Nebula Pulse",
+      description: "Fallback ethereal style",
+      colors: ["#6366f1", "#a855f7", "#ec4899"],
+      particleSizeMin: 1,
+      particleSizeMax: 6,
+      density: 8,
+      speed: 1.5,
       friction: 0.9,
-      shape: ParticleShape.SQUARE,
-      connectionDistance: 0,
-      trailEffect: 0.5,
-      noiseStrength: 5,
-      flowFieldStrength: 0,
-      zDepth: 50
+      shape: ParticleShape.CIRCLE,
+      blendingMode: 'lighter',
+      connectionDistance: 30,
+      trailEffect: 0.1,
+      noiseStrength: 2,
+      flowFieldStrength: 1
     };
   }
 };

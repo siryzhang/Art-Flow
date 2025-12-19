@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { ArtStyleConfig, ParticleShape } from '../types';
 import { generateArtStyle } from '../services/geminiService';
@@ -106,7 +107,7 @@ const Controls: React.FC<ControlsProps> = ({ currentStyle, onStyleChange, preset
           </div>
 
           {/* Manual Adjustments */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-8">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4 md:gap-8">
             <div className="space-y-2">
                 <div className="flex justify-between text-xs text-white/60">
                     <span>Density</span>
@@ -137,7 +138,7 @@ const Controls: React.FC<ControlsProps> = ({ currentStyle, onStyleChange, preset
 
             <div className="space-y-2">
                 <div className="flex justify-between text-xs text-white/60">
-                    <span>Particle Size</span>
+                    <span>Max Size</span>
                     <span>{currentStyle.particleSizeMax}</span>
                 </div>
                 <input 
@@ -145,20 +146,6 @@ const Controls: React.FC<ControlsProps> = ({ currentStyle, onStyleChange, preset
                     min="2" max="30" step="1"
                     value={currentStyle.particleSizeMax}
                     onChange={(e) => onStyleChange({...currentStyle, particleSizeMax: parseInt(e.target.value)})}
-                    className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full"
-                />
-            </div>
-
-            <div className="space-y-2">
-                <div className="flex justify-between text-xs text-white/60">
-                    <span>3D Depth</span>
-                    <span>{currentStyle.zDepth}</span>
-                </div>
-                <input 
-                    type="range" 
-                    min="0" max="300" step="10"
-                    value={currentStyle.zDepth}
-                    onChange={(e) => onStyleChange({...currentStyle, zDepth: parseInt(e.target.value)})}
                     className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full"
                 />
             </div>
