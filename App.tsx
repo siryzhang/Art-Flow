@@ -1,4 +1,3 @@
-
 import React, { useEffect, useRef, useState } from 'react';
 import Renderer from './components/Renderer';
 import Controls from './components/Controls';
@@ -28,15 +27,15 @@ const PRESET_STYLES: ArtStyleConfig[] = [
     colors: ["#00ffd5", "#00ff80", "#00b3ff", "#0055ff", "#8c00ff", "#ffffff"],
     particleSizeMin: 2,
     particleSizeMax: 15,
-    density: 9, // 适度增加粒子密度，提升具象度
-    speed: 2.5, // 显著提高回位速度，使人物轮廓更“稳”
+    density: 9,
+    speed: 2.5,
     friction: 0.93,
     shape: ParticleShape.CIRCLE,
     blendingMode: 'lighter',
     connectionDistance: 0,
-    trailEffect: 0.16, // 略微降低拖尾时长，减少运动模糊
+    trailEffect: 0.16,
     noiseStrength: 2.5,
-    flowFieldStrength: 3.8 // 适度降低流场强度，防止形体被“吹散”
+    flowFieldStrength: 3.8
   },
   {
     name: "Cyber Neon (赛博)",
@@ -53,22 +52,6 @@ const PRESET_STYLES: ArtStyleConfig[] = [
     trailEffect: 0.15,
     noiseStrength: 1.0,
     flowFieldStrength: 1.5
-  },
-  {
-    name: "Prism Glitch (棱镜)",
-    description: "Sharp geometric abstraction",
-    colors: ["#ffffff", "#ff0000", "#00ff00", "#0000ff"],
-    particleSizeMin: 2,
-    particleSizeMax: 15,
-    density: 14,
-    speed: 2.0,
-    friction: 0.8,
-    shape: ParticleShape.SQUARE,
-    blendingMode: 'source-over',
-    connectionDistance: 0,
-    trailEffect: 0.25,
-    noiseStrength: 5.0,
-    flowFieldStrength: 0.5
   }
 ];
 
@@ -76,31 +59,54 @@ const App: React.FC = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [streamStarted, setStreamStarted] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [currentStyle, setCurrentStyle] = useState<ArtStyleConfig>(PRESET_STYLES[1]); // 默认极光
+  const [currentStyle, setCurrentStyle] = useState<ArtStyleConfig>(PRESET_STYLES[1]); 
   const [showWelcome, setShowWelcome] = useState(true);
 
   useEffect(() => {
+    let stream: MediaStream | null = null;
     const startVideo = async () => {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { width: 640, height: 480, facingMode: "user" },
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { 
+            width: { ideal: 640 }, 
+            height: { ideal: 480 }, 
+            facingMode: "user" 
+          },
           audio: false
         });
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
-          videoRef.current.play();
+          await videoRef.current.play();
           setStreamStarted(true);
         }
       } catch (err) {
-        setError("Camera access denied. Please enable it to view the art.");
+        console.error("Camera error:", err);
+        setError("无法访问摄像头，请确保已授予权限并在 HTTPS 环境下运行。");
       }
     };
-    if (!showWelcome) startVideo();
+    
+    if (!showWelcome) {
+      startVideo();
+    }
+
+    return () => {
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+      }
+    };
   }, [showWelcome]);
 
   return (
     <div className="relative w-full h-screen bg-black overflow-hidden font-sans text-white">
-      <video ref={videoRef} className="hidden" playsInline muted />
+      {/* 关键：不要使用 hidden，而是使用 opacity-0，否则 MediaPipe 可能无法抓取帧 */}
+      <video 
+        ref={videoRef} 
+        className="opacity-0 absolute pointer-events-none" 
+        playsInline 
+        muted 
+        width="640" 
+        height="480"
+      />
       
       {streamStarted && <Renderer styleConfig={currentStyle} videoRef={videoRef} isPaused={false} />}
       {streamStarted && <MusicPlayer />}
@@ -122,10 +128,11 @@ const App: React.FC = () => {
       )}
 
       {error && !showWelcome && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/90">
-          <div className="text-center p-8 border border-red-500/30 rounded-3xl bg-red-500/10 backdrop-blur-xl">
-            <h2 className="text-3xl font-bold text-red-500 mb-4">Connection Failed</h2>
-            <p className="text-white/80">{error}</p>
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/90 px-6">
+          <div className="max-w-sm text-center p-8 border border-red-500/30 rounded-3xl bg-red-500/10 backdrop-blur-xl">
+            <h2 className="text-2xl font-bold text-red-500 mb-4">Connection Failed</h2>
+            <p className="text-white/80 text-sm mb-6">{error}</p>
+            <button onClick={() => window.location.reload()} className="px-6 py-2 bg-white/10 hover:bg-white/20 rounded-full text-xs transition-colors">Retry</button>
           </div>
         </div>
       )}
@@ -133,7 +140,7 @@ const App: React.FC = () => {
       {streamStarted && <Controls currentStyle={currentStyle} onStyleChange={setCurrentStyle} presetStyles={PRESET_STYLES} />}
 
       <div className="absolute top-6 left-1/2 -translate-x-1/2 z-40 pointer-events-none opacity-30 text-[10px] uppercase tracking-[0.3em] font-light text-center">
-          Moving your body to sculpt the aurora
+          Moving your hand to sculpt the aurora
       </div>
     </div>
   );

@@ -1,4 +1,3 @@
-
 import React, { useRef, useEffect, useState } from 'react';
 import { ArtStyleConfig, MouseState, Particle, ParticleShape } from '../types';
 
@@ -11,7 +10,7 @@ declare global {
 
 interface RendererProps {
   styleConfig: ArtStyleConfig;
-  videoRef: React.RefObject<HTMLVideoElement>;
+  videoRef: React.RefObject<HTMLVideoElement | null>;
   isPaused: boolean;
 }
 
@@ -23,31 +22,90 @@ const Renderer: React.FC<RendererProps> = ({ styleConfig, videoRef, isPaused }) 
   const handTrackerRef = useRef<any>(null);
   const cameraRef = useRef<any>(null);
   const mouseRef = useRef<MouseState>({ x: 0, y: 0, isActive: false });
+  const [isHandDetected, setIsHandDetected] = useState(false);
 
+  // Initialize MediaPipe Hands
   useEffect(() => {
-    if (window.Hands && videoRef.current && !handTrackerRef.current) {
-      const hands = new window.Hands({
-        locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
-      });
-      hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
-      hands.onResults((results: any) => {
-        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-          const indexTip = results.multiHandLandmarks[0][8];
-          if (canvasRef.current) {
-            mouseRef.current = { x: indexTip.x * canvasRef.current.width, y: indexTip.y * canvasRef.current.height, isActive: true };
+    let isMounted = true;
+    let pollInterval: any;
+
+    const setupTracking = async () => {
+      if (!window.Hands || !window.Camera) return;
+
+      if (videoRef.current && !handTrackerRef.current) {
+        clearInterval(pollInterval);
+        
+        const hands = new window.Hands({
+          locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+        });
+
+        hands.setOptions({
+          maxNumHands: 1,
+          modelComplexity: 1,
+          minDetectionConfidence: 0.5,
+          minTrackingConfidence: 0.5
+        });
+
+        hands.onResults((results: any) => {
+          if (!isMounted || !canvasRef.current) return;
+
+          if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+            const indexTip = results.multiHandLandmarks[0][8]; 
+            const w = canvasRef.current.width;
+            const h = canvasRef.current.height;
+
+            /**
+             * MIRROR COORDINATE MAPPING (Systematic Solution):
+             * Canvas is mirrored (scale-x-[-1]). 
+             * Visual Right = Internal X=0.
+             * Visual Left = Internal X=width.
+             * 
+             * Camera is unmirrored:
+             * Physically moving hand to Right -> Camera sees it on Left (tip.x is small).
+             * Internal X should be small (Right).
+             * Result: Internal X = tip.x * w.
+             */
+            mouseRef.current = {
+              x: indexTip.x * w,
+              y: indexTip.y * h,
+              isActive: true
+            };
+            if (!isHandDetected) setIsHandDetected(true);
+          } else {
+            if (isHandDetected) setIsHandDetected(false);
           }
-        }
-      });
-      handTrackerRef.current = hands;
-      const camera = new window.Camera(videoRef.current, {
-        onFrame: async () => { if (handTrackerRef.current) await handTrackerRef.current.send({ image: videoRef.current }); },
-        width: 640, height: 480
-      });
-      camera.start();
-      cameraRef.current = camera;
-    }
+        });
+
+        handTrackerRef.current = hands;
+
+        const camera = new window.Camera(videoRef.current, {
+          onFrame: async () => {
+            if (videoRef.current && isMounted) {
+              await hands.send({ image: videoRef.current });
+            }
+          },
+          width: 640,
+          height: 480
+        });
+
+        camera.start();
+        cameraRef.current = camera;
+      }
+    };
+
+    pollInterval = setInterval(() => {
+      if (window.Hands && window.Camera) setupTracking();
+    }, 500);
+
+    return () => {
+      isMounted = false;
+      clearInterval(pollInterval);
+      if (cameraRef.current) cameraRef.current.stop();
+      if (handTrackerRef.current) handTrackerRef.current.close();
+    };
   }, []);
 
+  // Window Resize & Particle Initialization
   useEffect(() => {
     const handleResize = () => {
       if (canvasRef.current) {
@@ -64,8 +122,9 @@ const Renderer: React.FC<RendererProps> = ({ styleConfig, videoRef, isPaused }) 
   }, [styleConfig.density]);
 
   const initParticles = (width: number, height: number) => {
+    if (width <= 0 || height <= 0) return;
     particlesRef.current = [];
-    const gap = Math.max(3, styleConfig.density);
+    const gap = Math.max(4, styleConfig.density);
     for (let y = 0; y < height; y += gap) {
       for (let x = 0; x < width; x += gap) {
         particlesRef.current.push({
@@ -91,7 +150,7 @@ const Renderer: React.FC<RendererProps> = ({ styleConfig, videoRef, isPaused }) 
       ctx.fillRect(x - size, y - size, size * 2, size * 2);
     } else if (shape === ParticleShape.LINE) {
       const angle = Math.atan2(p.vy, p.vx) || 0;
-      const len = size * 2.2;
+      const len = size * 2.5;
       ctx.moveTo(x - Math.cos(angle) * len, y - Math.sin(angle) * len);
       ctx.lineTo(x + Math.cos(angle) * len, y + Math.sin(angle) * len);
       ctx.stroke();
@@ -114,100 +173,130 @@ const Renderer: React.FC<RendererProps> = ({ styleConfig, videoRef, isPaused }) 
     let time = 0;
 
     const animate = () => {
-      if (!isPaused && video.readyState === 4 && tempCtx) {
-        time += 0.015;
-        const sampleScale = 0.12; 
+      if (!isPaused && video.readyState >= 2 && tempCtx && dimensions.width > 0 && dimensions.height > 0) {
+        time += 0.02;
+        const sampleScale = 0.15; 
         const w = Math.floor(dimensions.width * sampleScale);
         const h = Math.floor(dimensions.height * sampleScale);
-        tempCanvas.width = w; tempCanvas.height = h;
+        
+        tempCanvas.width = w; 
+        tempCanvas.height = h;
         tempCtx.drawImage(video, 0, 0, w, h);
-        const img = tempCtx.getImageData(0, 0, w, h).data;
+        
+        const imgData = tempCtx.getImageData(0, 0, w, h);
+        const img = imgData.data;
 
+        // Trail effect
         ctx.globalCompositeOperation = 'source-over';
         ctx.fillStyle = `rgba(0, 0, 0, ${styleConfig.trailEffect})`;
         ctx.fillRect(0, 0, dimensions.width, dimensions.height);
         
         ctx.globalCompositeOperation = styleConfig.blendingMode;
 
-        const pCount = particlesRef.current.length;
-        for (let i = 0; i < pCount; i++) {
+        const tx = mouseRef.current.x;
+        const ty = mouseRef.current.y;
+        const active = mouseRef.current.isActive;
+
+        for (let i = 0; i < particlesRef.current.length; i++) {
           const p = particlesRef.current[i];
           const px = Math.min(w - 1, Math.max(0, Math.floor(p.originX * sampleScale)));
           const py = Math.min(h - 1, Math.max(0, Math.floor(p.originY * sampleScale)));
           const idx = (py * w + px) * 4;
           
-          const r = img[idx], g = img[idx+1], b_val = img[idx+2];
-          const brightness = (r + g + b_val) / 3;
+          const brightness = (img[idx] + img[idx+1] + img[idx+2]) / 3;
 
-          if (brightness < 8) {
+          if (brightness < 12) {
             if (p.size > 0.1) p.size *= 0.85;
             continue; 
           }
 
           p.brightness = brightness;
           p.color = mapBrightnessToColor(brightness, styleConfig.colors);
-          p.size += (styleConfig.particleSizeMin + (brightness/255)*(styleConfig.particleSizeMax-styleConfig.particleSizeMin) - p.size) * 0.2;
-
-          // --- 核心优化：具象度增强逻辑 ---
-          // 亮度越高（越是人物主体），回位拉力越强。bNorm 范围 0.2-1.2
-          const bNorm = (brightness / 255) + 0.2;
-          const snapForce = 0.06 * styleConfig.speed * bNorm;
           
+          const targetSize = styleConfig.particleSizeMin + (brightness/255) * (styleConfig.particleSizeMax - styleConfig.particleSizeMin);
+          p.size += (targetSize - p.size) * 0.15;
+
+          const snapForce = 0.12 * styleConfig.speed * (brightness/255 + 0.1);
           p.vx += (p.originX - p.x) * snapForce;
           p.vy += (p.originY - p.y) * snapForce;
 
-          // 流场逻辑：在人物高亮区域适当减弱，在背景区域增强流动感
-          if (styleConfig.flowFieldStrength > 0 && px < w - 2 && py < h - 2) {
-              const b_r = (img[idx+4] + img[idx+5] + img[idx+6]) / 3;
-              const b_d = (img[idx + w*4] + img[idx + w*4 + 1] + img[idx + w*4 + 2]) / 3;
-              
-              // 边缘力
-              const edgeForceX = (brightness - b_d) * 0.18;
-              const edgeForceY = (b_r - brightness) * 0.18;
-
-              // 噪声力：随亮度反向调节，越亮（人）越稳，越暗（景）越飘
-              const stability = 1.0 - (brightness / 255) * 0.5;
-              const n = Math.sin(p.x * 0.01 + time) * Math.cos(p.y * 0.01 + time);
-              const noiseX = Math.cos(n * Math.PI) * styleConfig.noiseStrength * stability;
-              const noiseY = Math.sin(n * Math.PI) * styleConfig.noiseStrength * stability;
-
-              p.vx += (edgeForceX + noiseX) * styleConfig.flowFieldStrength * 0.1;
-              p.vy += (edgeForceY + noiseY) * styleConfig.flowFieldStrength * 0.1;
-          }
-
-          if (mouseRef.current.isActive) {
-            const dx = mouseRef.current.x - p.x;
-            const dy = mouseRef.current.y - p.y;
+          // INTERACTION (Unified Mouse & Hand)
+          if (active) {
+            const dx = tx - p.x;
+            const dy = ty - p.y;
             const d2 = dx*dx + dy*dy;
-            if (d2 < 22000) {
+            const radius = isHandDetected ? 80000 : 40000; // Hand tracking feels better with larger radius
+            if (d2 < radius) {
               const dist = Math.sqrt(d2);
-              const f = (1 - dist/148) * 22 * styleConfig.speed;
-              p.vx -= (dx/dist) * f; p.vy -= (dy/dist) * f;
+              const force = (1 - dist / Math.sqrt(radius)) * (isHandDetected ? 48 : 35) * styleConfig.speed;
+              p.vx -= (dx / dist) * force;
+              p.vy -= (dy / dist) * force;
             }
           }
 
-          p.vx *= styleConfig.friction; p.vy *= styleConfig.friction;
-          p.x += p.vx; p.y += p.vy;
+          // Flow Field
+          if (styleConfig.flowFieldStrength > 0 && px < w - 2 && py < h - 2) {
+            const b_r = (img[idx+4] + img[idx+5] + img[idx+6]) / 3;
+            const b_d = (img[idx + w*4] + img[idx + w*4 + 1] + img[idx + w*4 + 2]) / 3;
+            const n = Math.sin(p.x * 0.005 + time) * Math.cos(p.y * 0.005 + time);
+            p.vx += (brightness - b_d + Math.cos(n * Math.PI) * styleConfig.noiseStrength) * styleConfig.flowFieldStrength * 0.07;
+            p.vy += (b_r - brightness + Math.sin(n * Math.PI) * styleConfig.noiseStrength) * styleConfig.flowFieldStrength * 0.07;
+          }
+
+          p.vx *= styleConfig.friction; 
+          p.vy *= styleConfig.friction;
+          p.x += p.vx; 
+          p.y += p.vy;
 
           ctx.fillStyle = p.color; 
           ctx.strokeStyle = p.color;
-          ctx.lineWidth = Math.max(1, p.size / 3.5);
+          ctx.lineWidth = Math.max(1, p.size / 3);
           drawShape(ctx, p, styleConfig.shape);
+        }
+
+        // DRAW TRACKING DOT (Visual Feedback)
+        if (active) {
+          ctx.globalCompositeOperation = 'lighter';
+          ctx.beginPath();
+          ctx.arc(tx, ty, isHandDetected ? 15 : 5, 0, Math.PI * 2);
+          ctx.fillStyle = isHandDetected ? 'rgba(34, 211, 238, 0.4)' : 'rgba(255, 255, 255, 0.2)';
+          ctx.fill();
         }
       }
       animationFrameRef.current = requestAnimationFrame(animate);
     };
     animationFrameRef.current = requestAnimationFrame(animate);
     return () => { if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current); };
-  }, [styleConfig, dimensions, isPaused]);
+  }, [styleConfig, dimensions, isPaused, isHandDetected]);
 
   return (
-    <canvas
-      ref={canvasRef}
-      onMouseMove={(e) => (mouseRef.current = { x: dimensions.width - e.clientX, y: e.clientY, isActive: true })}
-      onMouseLeave={() => (mouseRef.current.isActive = false)}
-      className="absolute top-0 left-0 w-full h-full block touch-none scale-x-[-1] bg-black"
-    />
+    <>
+      <canvas
+        ref={canvasRef}
+        onMouseMove={(e) => {
+          if (!isHandDetected) {
+            mouseRef.current = { 
+              x: dimensions.width - e.clientX, 
+              y: e.clientY, 
+              isActive: true 
+            };
+          }
+        }}
+        onMouseEnter={() => !isHandDetected && (mouseRef.current.isActive = true)}
+        onMouseLeave={() => !isHandDetected && (mouseRef.current.isActive = false)}
+        className="absolute top-0 left-0 w-full h-full block touch-none scale-x-[-1] bg-black cursor-none"
+      />
+      
+      {/* HUD for tracking status */}
+      <div className="absolute top-8 left-8 z-50 flex flex-col gap-2 pointer-events-none">
+        {isHandDetected && (
+          <div className="flex items-center gap-3 px-5 py-2 glass-panel rounded-full animate-fade-in border-cyan-400/40">
+            <div className="w-2.5 h-2.5 bg-cyan-400 rounded-full shadow-[0_0_12px_#22d3ee] animate-pulse"></div>
+            <span className="text-[10px] uppercase tracking-widest font-bold text-cyan-100">AI Sculpting Mode</span>
+          </div>
+        )}
+      </div>
+    </>
   );
 };
 

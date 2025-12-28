@@ -14,7 +14,6 @@ const MusicPlayer: React.FC = () => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const playPromiseRef = useRef<Promise<void> | null>(null);
 
-  // 初始化音频对象，避免 inline src 造成的 reload 问题
   useEffect(() => {
     const audio = new Audio();
     audio.src = TRACK.url;
@@ -25,14 +24,17 @@ const MusicPlayer: React.FC = () => {
 
     return () => {
       if (audioRef.current) {
+        // If there's an active play promise, we don't need to await it here
+        // but we should avoid setting src = "" immediately if we want to be absolutely quiet.
+        // However, in cleanup, the priority is stopping the sound.
         audioRef.current.pause();
-        audioRef.current.src = ""; // 彻底释放
+        audioRef.current.src = ""; 
+        audioRef.current.load(); // Forces reset
         audioRef.current = null;
       }
     };
   }, []);
 
-  // 同步音量
   useEffect(() => {
     if (audioRef.current) audioRef.current.volume = volume;
   }, [volume]);
@@ -42,16 +44,20 @@ const MusicPlayer: React.FC = () => {
     if (!audio) return;
 
     if (isPlaying) {
-      // 如果正在尝试播放，先等待 promise 完成再暂停，防止 Interruption 错误
       if (playPromiseRef.current) {
-        try { await playPromiseRef.current; } catch (e) {}
+        try { 
+          await playPromiseRef.current; 
+        } catch (e) {
+          // Ignore interruption errors when stopping
+        }
       }
       audio.pause();
       setIsPlaying(false);
     } else {
       try {
-        playPromiseRef.current = audio.play();
-        await playPromiseRef.current;
+        const promise = audio.play();
+        playPromiseRef.current = promise;
+        await promise;
         setIsPlaying(true);
       } catch (error: any) {
         if (error.name !== 'AbortError') {
@@ -65,7 +71,6 @@ const MusicPlayer: React.FC = () => {
 
   return (
     <div className="fixed top-6 right-6 z-50 transition-all duration-500">
-      {/* Visualizer & Controller */}
       <div 
         onClick={isMinimized ? () => setIsMinimized(false) : undefined}
         className={`glass-panel rounded-2xl p-4 transition-all duration-500 origin-top-right ${isMinimized ? 'w-12 h-12 overflow-hidden cursor-pointer' : 'w-44'}`}
